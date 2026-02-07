@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+
+# ============================================================
+# 🔐 سجل الملفات المقفلة (Immutable Files Log) 🔐
+# في حال أردت فك القفل مستقبلاً، هذه هي الملفات التي تم تشميعها:
+#
+# 1. السكريبت (الحارس):
+#    /usr/local/bin/sys-core.py
+#
+# 2. التشغيل التلقائي (Autostart):
+#    /home/newuser/.config/autostart/system-guardian.desktop
+#
+# 3. إعدادات الشبكة والإنترنت (Network & DNS):
+#    /etc/resolv.conf
+#    /etc/netplan/*.yaml
+#    /etc/NetworkManager/system-connections/
+#    /etc/hosts
+#    /etc/nextdns.conf
+#
+# 4. إعدادات النظام والواجهة (System & GUI):
+#    /etc/gdm3/custom.conf
+#    /etc/brave/policies/managed/force_unhook.json
+# 5. إغلاق ثغرة الشاشة السوداء (TTY / Virtual Consoles):
+#    - تم تعطيل خدمات التيرمنال: systemctl mask getty@tty2...tty6
+#    - تم تعديل إعدادات الدخول: /etc/systemd/logind.conf
+#    - التعديلات: (NAutoVTs=1) و (ReserveVT=1) لإجبار النظام على شاشة واحدة.
+#    - الملف مقفل: /etc/systemd/logind.conf
+
+# ============================================================
+
+# -*- coding: utf-8 -*-
+"""
+Guardian Script v3.0 - Ultimate Edition with Logging
+سكريبت الحماية الشامل:
+1. يحل مشكلة الكتابة بالعربية (يحول "بنت" إلى "fkj" تلقائياً ويكتشفها).
+2. يحل مشكلة النسخ بالتحديد (الماوس الأوسط).
+3. يغلق النوافذ بقوة.
+4. يشمل كل القوائم المطلوبة.
+5. يسجل كل شيء في ملف zzza.txt
+"""
+
+import subprocess
+import threading
+import time
+import re
+import signal
+import sys
+import os
+from datetime import datetime
+
+# ============================================================
+# إعداد ملف الـ Log
+# ============================================================
+
+LOG_FILE = "/home/newuser/zzza.txt"
+
+def log_message(message):
+    """كتابة رسالة في ملف الـ log مع الوقت والتاريخ"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"[{timestamp}] {message}\n"
+    
+    # طباعة على الشاشة
+    print(log_entry.strip())
+    
+    # كتابة في الملف
+    try:
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(log_entry)
+    except Exception as e:
+        print(f"خطأ في الكتابة للملف: {e}")
+
+# ============================================================
+# التحقق من المتطلبات
+# ============================================================
+
+def check_dependencies():
+    missing_libs = []
+    missing_tools = []
+    
+    try:
+        from pynput import keyboard
+    except ImportError:
+        missing_libs.append("pynput")
+    
+    try:
+        import pyperclip
+    except ImportError:
+        missing_libs.append("pyperclip")
+        
+    if subprocess.call(["which", "xsel"], stdout=subprocess.DEVNULL) != 0:
+        missing_tools.append("xsel")
+    
+    if subprocess.call(["which", "xdotool"], stdout=subprocess.DEVNULL) != 0:
+        missing_tools.append("xdotool")
+
+    if missing_libs or missing_tools:
+        log_message("=" * 60)
+        log_message("⚠️  تنبيه: أدوات مفقودة!")
+        if missing_libs:
+            log_message(f"مكتبات بايثون: sudo apt install python3-pynput python3-pyperclip")
+        if missing_tools:
+            log_message(f"أدوات النظام: sudo apt install {' '.join([t.split()[0] for t in missing_tools])}")
+        log_message("=" * 60)
+        sys.exit(1)
+
+log_message("🚀 بدء فحص المتطلبات...")
+check_dependencies()
+log_message("✅ جميع المتطلبات متوفرة")
+
+from pynput import keyboard
+import pyperclip
+
+# ============================================================
+# الإعدادات العامة
+# ============================================================
+
+# 🔴 غير هذا إلى False ليعمل الحظر فعلياً ويغلق النوافذ
+TEST_MODE = True
+
+
+# حجم الذاكرة المؤقتة للكتابة
+BUFFER_SIZE = 500
+
+# سرعة الفحص (بالثواني)
+CLIPBOARD_CHECK_INTERVAL = 0.5
+
+log_message(f"⚙️  الإعدادات: TEST_MODE={TEST_MODE}, BUFFER_SIZE={BUFFER_SIZE}")
+
+# ============================================================
+# خريطة الكيبورد العربي (الحل السحري لمشكلة fkj)
+# ============================================================
+
+# هذه الخريطة تحول الحرف العربي إلى الزر الإنجليزي المقابل له في الكيبورد القياسي
+AR_TO_EN_MAP = {
+    'ا': 'h', 'ب': 'f', 'ت': 'j', 'ث': 'e', 'ج': '[', 'ح': 'p', 'خ': 'o', 
+    'د': ']', 'ذ': '`', 'ر': 'v', 'ز': '.', 'س': 's', 'ش': 'a', 'ص': 'w', 
+    'ض': 'q', 'ط': "'", 'ظ': '/', 'ع': 'u', 'غ': 'y', 'ف': 't', 'ق': 'r', 
+    'ك': ';', 'ل': 'g', 'م': 'l', 'ن': 'k', 'ه': 'i', 'و': ',', 'ي': 'd', 
+    'ة': 'm', 'ى': 'n', 'ؤ': 'c', 'ئ': 'z', 'ء': 'x', 'لا': 'b', 'آ': 'h', 
+    'إ': 'h', 'أ': 'h'
+}
+
+# ============================================================
+# جداول استبدال الأحرف (للتحايل)
+# ============================================================
+
+CHAR_REPLACEMENTS = {
+    '0': 'o', '1': 'l', '3': 'e', '4': 'a', '5': 's',
+    '6': 'g', '7': 't', '8': 'b', '9': 'g',
+    '@': 'a', '$': 's', '!': 'i', '(': 'c', ')': 'c',
+    '+': 't', '|': 'l', '*': 'a', '#': 'h',
+    'أ': 'ا', 'إ': 'ا', 'آ': 'ا', 'ة': 'ه', 'ى': 'ي', 'ئ': 'ي', 'ؤ': 'و',
+}
+
+ARABIC_NOISE = re.compile(r'[\u064B-\u065F\u0640\u06D4\u06D5-\u06ED]')
+
+# ============================================================
+# قوائم الحظر الشاملة
+# ============================================================
+
+# 1. الكلمات الإباحية (سيتم توليد النسخ الإنجليزية منها تلقائياً)
+PORN_WORDS_BASE = [
+    "girl", "girls", "woman", "women", "wrestling", "mixed", "mixedwrestling",
+    "بنت", "بنات", "البنت", "البنات", "بنوت", "بنوتة", "بنوته", "بنيات", 
+    "امراة", "امراه", "امرأة", "امرأه", "إمراة", "إمراه", "إمرأة", "إمرأه",
+    "مراة", "مراه", "مرأة", "مرأه", "المراة", "المراه", "المرأة", "المرأه",
+    "امره", "امرة", "مرة",
+    "نساء", "النساء", "نسوة", "نسوان", "النسا", "نسوه",
+    "مصارعة", "المصارعة", "مصارعه", "المصارعه",
+    "مختلطة", "المختلطة", "مختلطه", "المختلطه",
+    "الست", "ستات", "حريم", "الحريم",
+]
+
+# 2. أوامر التثبيت الخطيرة
+DANGEROUS_INSTALL_COMMANDS = [
+    "apt install e2fsprogs", "apt-get install e2fsprogs", "apt reinstall e2fsprogs",
+    "apt install --reinstall e2fsprogs", "aptitude install e2fsprogs",
+    "dpkg -i e2fsprogs", "dpkg --install e2fsprogs",
+    "apt install busybox", "apt-get install busybox", "apt install busybox-static",
+    "snap install busybox", "apt install attr", "apt-get install attr",
+    "apt install util-linux", "wget chattr", "curl chattr", "wget e2fsprogs",
+    "curl e2fsprogs", "wget busybox", "curl busybox",
+    "pip install uchattr", "pip3 install uchattr",
+]
+
+# 3. أوامر قتل السكريبت
+KILL_SCRIPT_COMMANDS = [
+    "pkill -f w.py", "pkill w.py", "pkill -9 w.py", "pkill guardian", "pkill -f guardian",
+    "killall w.py", "killall guardian", "killall python3 w.py", "killall -9 w.py",
+    "kill -9 guardian", "kill -sigkill guardian",
+    "systemctl stop guardian", "systemctl disable guardian", "systemctl mask guardian",
+    "systemctl kill guardian", "service guardian stop",
+    "rm /etc/systemd/system/guardian", "rm -rf /etc/systemd/system/guardian",
+    "rm guardian.service", "rm w.py", "rm -f w.py", "rm -rf w.py", "unlink w.py",
+    "pkill -f sys-core.py",
+    "pkill sys-core.py",
+    "killall sys-core.py",
+    "killall python3 sys-core.py",
+    "rm sys-core.py",
+    "rm -f sys-core.py",
+    "rm -rf sys-core.py",
+    "mv sys-core.py",
+    "systemctl stop guardian",
+    "systemctl disable guardian",
+    "kill -9", "killall -9",
+    "nextdns stop",
+    "nextdns start",
+    "nextdns restart",
+    "nextdns deactivate",
+    "nextdns uninstall",
+    "nextdns install",
+    "sudo nextdns",
+    "/usr/bin/nextdns",
+    "service nextdns stop",
+    "systemctl stop nextdns",
+    "systemctl disable nextdns",
+    "systemctl restart nextdns",
+]
+
+# 4. أوامر تعديل الملفات الحساسة
+FILE_MOD_COMMANDS = [
+    "nano /etc/resolv.conf", "vi /etc/resolv.conf", "vim /etc/resolv.conf",
+    "gedit /etc/resolv.conf", "rm /etc/resolv.conf", "mv /etc/resolv.conf",
+    "echo nameserver", "tee /etc/resolv.conf",
+    "nano /etc/nextdns.conf", "vi /etc/nextdns.conf", "rm /etc/nextdns.conf",
+    "nano /etc/hosts", "vi /etc/hosts", "rm /etc/hosts",
+    "nano /etc/netplan", "vi /etc/netplan", "rm /etc/netplan", "netplan apply",
+    "nano /etc/brave/policies", "rm force_unhook.json",
+]
+
+# 5. أوامر إزالة القفل
+UNLOCK_COMMANDS = [
+    "chattr -i", "chattr -ia", "chattr =", "lsattr /etc",
+    "chattr --help", "debugfs -w", "tune2fs", "e2fsck",
+    "find /usr/bin", "ls -lt /usr/bin", "locate chattr",
+    "which chattr", "whereis chattr",
+]
+
+# 6. أوامر الشبكة و DNS و VPN
+NETWORK_TOOLS = [
+    "systemd-resolve", "resolvectl", "nmcli connection", "dhclient -r",
+    "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1",
+    "vpn", "openvpn", "wireguard", "nordvpn", "expressvpn", "protonvpn",
+    "torbrowser", "tor browser", "psiphon", "lantern", "shadowsocks", "v2ray",
+    "proxy", "socks5", "cloudflare warp",
+]
+
+# 7. إعدادات المتصفح و Wayland والتحايل
+OTHER_BLACKLIST = [
+    "chrome://flags", "about:config", "dns_over_https", "secure dns",
+    "wayland", "waylandenable",
+    "fcntl.ioctl", "fs_ioc_setflags", "os.chflags", "subprocess.popen",
+    "w.py", "guardian", "nextdns", "busybox", "chattr", "lsattr",
+    "فك القفل", "ازالة القفل", "bypass", "disable guardian",
+]
+
+# ============================================================
+# توليد القوائم الذكية
+# ============================================================
+
+PORN_WORDS_ENCODED = []
+
+def generate_ghost_words():
+    """تحويل الكلمات العربية إلى نظيرتها الإنجليزية (Ghost Typing)"""
+    log_message("🔄 جاري توليد خريطة الكلمات العربية...")
+    for word in PORN_WORDS_BASE:
+        # إضافة الكلمة الأصلية
+        PORN_WORDS_ENCODED.append(word)
+        
+        # محاولة تحويلها إلى English Keystrokes
+        ghost_word = ""
+        is_arabic = False
+        for char in word:
+            if char in AR_TO_EN_MAP:
+                ghost_word += AR_TO_EN_MAP[char]
+                is_arabic = True
+            elif 'a' <= char.lower() <= 'z':
+                ghost_word += char
+        
+        if is_arabic and ghost_word:
+            # إضافة الكلمة "المشفرة" (مثل fkj لـ بنت)
+            PORN_WORDS_ENCODED.append(ghost_word)
+            # إضافة نسخة مكررة الأحرف للتحايل (ffkkjj)
+            doubled = "".join([c*2 for c in ghost_word])
+            PORN_WORDS_ENCODED.append(doubled)
+
+generate_ghost_words()
+
+# تجميع كل القوائم
+ALL_BLOCKED_PHRASES = (
+    DANGEROUS_INSTALL_COMMANDS + KILL_SCRIPT_COMMANDS + FILE_MOD_COMMANDS +
+    UNLOCK_COMMANDS + NETWORK_TOOLS + OTHER_BLACKLIST
+)
+
+# ============================================================
+# منطق الفحص (Core Logic)
+# ============================================================
+
+def normalize_text(text):
+    """تنظيف النص للكشف عن التحايل"""
+    if not text:
+        return ""
+    
+    text = text.lower()
+    text = ARABIC_NOISE.sub('', text) # حذف التشكيل
+    
+    # استبدال الأحرف المخادعة
+    result = []
+    for char in text:
+        result.append(CHAR_REPLACEMENTS.get(char, char))
+    text = ''.join(result)
+    
+    # إبقاء الحروف والأرقام فقط
+    text = re.sub(r'[^\u0600-\u06FFa-z0-9]', '', text)
+    
+    # إزالة التكرار
+    text = re.sub(r'(.)\1+', r'\1', text)
+    
+    return text
+
+def check_content(text):
+    """فحص النص (يدعم العربية والإنجليزية و Ghost Typing)"""
+    if not text:
+        return False, None
+    
+    # 1. فحص الكلمات الإباحية (القائمة الموسعة)
+    # نستخدم التطبيع العادي هنا
+    normalized = normalize_text(text)
+    
+    for word in PORN_WORDS_ENCODED:
+        # نقوم بتطبيع كلمة الحظر أيضاً
+        clean_word = normalize_text(word)
+        if clean_word in normalized:
+            return True, f"محتوى محظور: {word}"
+    
+    # 2. فحص الأوامر (بدون مسافات)
+    raw_clean = text.lower().replace(" ", "").replace("\n", "")
+    for phrase in ALL_BLOCKED_PHRASES:
+        clean_phrase = phrase.lower().replace(" ", "")
+        if clean_phrase in raw_clean:
+            return True, f"أمر ممنوع: {phrase}"
+            
+    return False, None
+
+# ============================================================
+# إدارة النوافذ
+# ============================================================
+
+def kill_active_window():
+    try:
+        # الحصول على ID
+        window_id = subprocess.check_output(['xdotool', 'getactivewindow']).decode().strip()
+        
+        if TEST_MODE:
+            log_message(f"🔫 [TEST] تم رصد المخالفة! لو كان الوضع فعالاً لتم غلق النافذة: {window_id}")
+            return
+
+        # إغلاق قوي
+        subprocess.run(['xdotool', 'windowclose', window_id])
+        # قتل العملية (تأكيد)
+        pid = subprocess.check_output(['xdotool', 'getwindowpid', window_id]).decode().strip()
+        subprocess.run(['kill', '-9', pid])
+        log_message(f"🚫 تم سحق النافذة {window_id}")
+        
+    except Exception as e:
+        log_message(f"❌ خطأ في الغلق: {e}")
+
+def handle_violation(reason):
+    log_message(f"\n{'!'*40}")
+    log_message(f"🛑 كشف انتهاك! {reason}")
+    log_message(f"{'!'*40}\n")
+    kill_active_window()
+    
+    if not TEST_MODE:
+        try:
+            pyperclip.copy("")
+            subprocess.run(['xsel', '-bc'], stderr=subprocess.DEVNULL)
+            log_message("🧹 تم تنظيف الحافظة")
+        except Exception as e:
+            log_message(f"⚠️  خطأ في تنظيف الحافظة: {e}")
+
+# ============================================================
+# المراقبة
+# ============================================================
+
+class GuardianMonitor:
+    def __init__(self):
+        self.key_buffer = ""
+        self.last_clipboard = ""
+        self.last_primary = ""
+        self.lock = threading.Lock()
+        
+    def on_press(self, key):
+        try:
+            char = None
+            if hasattr(key, 'char') and key.char:
+                char = key.char
+            elif key == keyboard.Key.space:
+                char = " "
+            elif key == keyboard.Key.enter:
+                found, reason = check_content(self.key_buffer)
+                if found: 
+                    handle_violation(reason)
+                self.key_buffer = ""
+                return
+            elif key == keyboard.Key.backspace:
+                self.key_buffer = self.key_buffer[:-1]
+                return
+            
+            if char:
+                with self.lock:
+                    self.key_buffer += char
+                    if len(self.key_buffer) > BUFFER_SIZE:
+                        self.key_buffer = self.key_buffer[-BUFFER_SIZE:]
+                    
+                    # فحص فوري
+                    check_slice = self.key_buffer[-50:]
+                    found, reason = check_content(check_slice)
+                    if found:
+                        handle_violation(reason)
+                        self.key_buffer = ""
+                        
+        except Exception as e:
+            log_message(f"⚠️  خطأ في on_press: {e}")
+
+    def check_clipboards(self):
+        while True:
+            try:
+                # 1. الحافظة العادية
+                curr = pyperclip.paste()
+                if curr != self.last_clipboard:
+                    self.last_clipboard = curr
+                    found, reason = check_content(curr)
+                    if found: 
+                        handle_violation(f"نسخ: {reason}")
+
+                # 2. تحديد الماوس (xsel)
+                try:
+                    prim = subprocess.check_output(
+                        ['xsel', '-o', '-p'], 
+                        stderr=subprocess.DEVNULL,
+                        timeout=0.2
+                    ).decode('utf-8', errors='ignore')
+                    
+                    if prim and prim != self.last_primary:
+                        self.last_primary = prim
+                        found, reason = check_content(prim)
+                        if found: 
+                            handle_violation(f"تحديد: {reason}")
+                except:
+                    pass
+
+                time.sleep(CLIPBOARD_CHECK_INTERVAL)
+            except Exception as e:
+                log_message(f"⚠️  خطأ في check_clipboards: {e}")
+                time.sleep(1)
+
+    def start(self):
+        log_message(f"🛡️  الحماية تعمل (وضع الاختبار: {TEST_MODE})")
+        log_message(f"📝 تمت إضافة {len(PORN_WORDS_ENCODED)} كلمة (شاملة العربية والترجمة العكسية)")
+        log_message(f"📄 سيتم تسجيل كل شيء في: {LOG_FILE}")
+        
+        l = keyboard.Listener(on_press=self.on_press)
+        l.start()
+        
+        t = threading.Thread(target=self.check_clipboards, daemon=True)
+        t.start()
+        
+        l.join()
+
+if __name__ == "__main__":
+    log_message("="*60)
+    log_message("🚀 بدء تشغيل Guardian Script v3.0 with Logging")
+    log_message("="*60)
+    GuardianMonitor().start()
