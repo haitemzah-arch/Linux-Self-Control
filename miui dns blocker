@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""
+DNS Settings Guard - نسخة البرق
+يمنع الدخول لصفحة الاتصال والشبكة
+تشغيل: python3 dns_guard.py
+"""
+
+import subprocess
+import time
+import sys
+
+CHECK_INTERVAL = 0.5
+
+BLOCKED_FRAGMENTS = [
+    "MiuiWirelessSettings",
+    "PrivateDnsSettings",
+    "DnsSettings",
+]
+
+def adb(cmd: list, timeout=5) -> str:
+    result = subprocess.run(["adb"] + cmd, capture_output=True, timeout=timeout)
+    return result.stdout.decode(errors="ignore")
+
+def check_adb():
+    out = adb(["devices"])
+    lines = [l for l in out.strip().splitlines() if "device" in l and "List" not in l]
+    if not lines:
+        print("❌  لا يوجد جهاز متصل!")
+        sys.exit(1)
+    print(f"✅  جهاز متصل: {lines[0].split()[0]}")
+
+def is_blocked() -> tuple:
+    out = adb(["shell", "dumpsys", "activity", "top"])
+    for fragment in BLOCKED_FRAGMENTS:
+        if fragment in out:
+            return True, fragment
+    return False, ""
+
+def go_back():
+    adb(["shell", "input", "keyevent", "KEYCODE_BACK"])
+
+def main():
+    print("=" * 50)
+    print("    🔒  DNS Settings Guard  🔒")
+    print("=" * 50)
+
+    check_adb()
+
+    print(f"\n الصفحات المحظورة:")
+    for f in BLOCKED_FRAGMENTS:
+        print(f"   🚫 {f}")
+    print(f"\n🚀  بدأ المراقبة... Ctrl+C للإيقاف\n")
+
+    count = 0
+
+    try:
+        while True:
+            t0 = time.time()
+            blocked, fragment = is_blocked()
+            count += 1
+
+            if blocked:
+                print(f"\n🚫  محظور! ({fragment}) → رجوع")
+                go_back()
+                time.sleep(0.5)
+            else:
+                sys.stdout.write(f"\r✅  آمن | #{count}   ")
+                sys.stdout.flush()
+
+            time.sleep(max(0, CHECK_INTERVAL - (time.time() - t0)))
+
+    except KeyboardInterrupt:
+        print(f"\n\n⏹️  توقفت. فحوصات: {count}")
+
+if __name__ == "__main__":
+    main()
