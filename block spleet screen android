@@ -1,0 +1,57 @@
+import subprocess
+import time
+import re
+
+def run_adb(command):
+    result = subprocess.run(
+        f"adb shell {command}",
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+    return result.stdout.strip()
+
+def is_split_screen():
+    output = run_adb("dumpsys activity activities | grep -m1 'mInSplitScreen=true'")
+    return bool(output)
+
+def get_exit_button_coords():
+    output = run_adb("dumpsys window windows | grep -A10 'ExitMultiModeBtn'")
+    for line in output.split('\n'):
+        if 'Frame:' in line or 'mFrame=' in line or 'Frames:' in line:
+            nums = re.findall(r'\d+', line)
+            if len(nums) >= 4:
+                x = (int(nums[0]) + int(nums[2])) // 2
+                y = (int(nums[1]) + int(nums[3])) // 2
+                return x, y
+    return None
+
+def exit_split_screen():
+    print("⚠️  Split Screen مكتشف! جاري الإغلاق...")
+    coords = get_exit_button_coords()
+    if coords:
+        x, y = coords
+        run_adb(f"input tap {x} {y}")
+    else:
+        run_adb("input keyevent KEYCODE_HOME")
+    time.sleep(2)  # انتظر حتى ينتهي النظام
+    print("✅ تم!")
+
+def main():
+    print("🔍 بدأ مراقبة Split Screen...")
+    print("اضغط Ctrl+C للإيقاف\n")
+
+    while True:
+        try:
+            if is_split_screen():
+                exit_split_screen()
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n⛔ تم إيقاف المراقبة")
+            break
+        except Exception as e:
+            print(f"خطأ: {e}")
+            time.sleep(2)
+
+if __name__ == "__main__":
+    main()
