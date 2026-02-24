@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""
+All-in-One Guard - سكريبت موحد
+انستقرام + تيك توك + DNS + Split Screen
+تشغيل: python3 guard.py
+"""
+
+import subprocess, time, sys, os, io
+import numpy as np
+from PIL import Image, ImageDraw
+
+# ═══════════════════════════════════════════════
+#         إعدادات انستقرام
+# ═══════════════════════════════════════════════
+IG_PKG = "com.instagram.android"
+IG_TOOLBAR_X1, IG_TOOLBAR_Y1 = 216, 2175
+IG_TOOLBAR_X2, IG_TOOLBAR_Y2 = 1080, 2285
+IG_DOT_X1 = 471 - 216; IG_DOT_Y1 = 2196 - 2175
+IG_DOT_X2 = 540 - 216; IG_DOT_Y2 = 2254 - 2175
+IG_HEADER_X1, IG_HEADER_Y1 = 552, 142
+IG_HEADER_X2, IG_HEADER_Y2 = 882, 208
+IG_REEL_X1, IG_REEL_Y1 = 56, 164
+IG_REEL_X2, IG_REEL_Y2 = 119, 202
+IG_MSG_X, IG_MSG_Y = 540, 2230
+IG_MIN  = 0.88
+IG_MAX  = 0.50
+IG_HDR  = 0.85
+IG_REEL = 0.90
+
+# ═══════════════════════════════════════════════
+#         إعدادات تيك توك
+# ═══════════════════════════════════════════════
+TT_PKG = "com.zhiliaoapp.musically"
+TT_MSG_X, TT_MSG_Y = 755, 2188
+TT_HOME_X1, TT_HOME_Y1 = 52, 2148
+TT_HOME_X2, TT_HOME_Y2 = 162, 2260
+TT_ICON_X1, TT_ICON_Y1 = 938, 2165
+TT_ICON_X2, TT_ICON_Y2 = 1016, 2240
+TT_THRESH = 0.90
+
+# ═══════════════════════════════════════════════
+#         إعدادات DNS و Split Screen
+# ═══════════════════════════════════════════════
+DNS_BLOCKED   = ["MiuiWirelessSettings", "PrivateDnsSettings"]
+SPLIT_BLOCKED = ["mInSplitScreen=true", "mWindowingMode=multi-window"]
+
+CHECK_INTERVAL = 0.6
+
+# ═══════════════════════════════════════════════
+#         مسارات الصور المرجعية
+# ═══════════════════════════════════════════════
+DIR = os.path.dirname(os.path.abspath(__file__))
+REF_IG_TOOLBAR  = os.path.join(DIR, "ref_no_dot.jpg")
+REF_IG_SETTINGS = os.path.join(DIR, "ref_settings_header.png")
+REF_IG_REEL     = os.path.join(DIR, "tg_ref_icon.png")
+REF_TT_HOME     = os.path.join(DIR, "tt_ref_home.png")
+REF_TT_ICON     = os.path.join(DIR, "tt_ref_new.png")
+
+# ═══════════════════════════════════════════════
+#         ADB
+# ═══════════════════════════════════════════════
+def adb(cmd, timeout=6):
+    return subprocess.run(["adb"]+cmd, capture_output=True, timeout=timeout).stdout
+
+def adb_str(cmd, timeout=6):
+    return adb(cmd, timeout).decode(errors="ignore")
+
+def tap(x, y):  adb(["shell","input","tap",str(x),str(y)])
+def go_home():  adb(["shell","input","keyevent","KEYCODE_HOME"])
+def go_back():  adb(["shell","input","keyevent","KEYCODE_BACK"])
+
+def screenshot():
+    raw = adb(["exec-out","screencap","-p"], timeout=6)
+    return Image.open(io.BytesIO(raw)).convert("RGB")
+
+def current_app():
+    out = adb_str(["shell","dumpsys","window"])
+    for l in out.splitlines():
+        if "mCurrentFocus" in l:
+            return l
+    return ""
+
+# ═══════════════════════════════════════════════
+#         معالجة الصور
+# ═══════════════════════════════════════════════
+def prepare(img, size=(200,25)):
+    arr = np.array(img.resize(size, Image.LANCZOS), dtype=np.float32).flatten()
+    arr -= arr.mean()
+    return arr
+
+def sim(a, b):
+    d = np.linalg.norm(a)*np.linalg.norm(b)
+    return float(np.dot(a,b)/d) if d else 0.0
+
+def mask_dot(img):
+    img = img.copy()
+    ImageDraw.Draw(img).rectangle([IG_DOT_X1,IG_DOT_Y1,IG_DOT_X2,IG_DOT_Y2], fill=(0,0,0))
+    return img
+
+# ═══════════════════════════════════════════════
+#         تحميل المراجع
+# ═══════════════════════════════════════════════
+def load_refs():
+    refs = {}
+    for key, path, size in [
+        ("ig_toolbar",  REF_IG_TOOLBAR,  (300,30)),
+        ("ig_settings", REF_IG_SETTINGS, (200,25)),
+        ("ig_reel",     REF_IG_REEL,     (50,30)),
+        ("tt_home",     REF_TT_HOME,     (50,50)),
+        ("tt_icon",     REF_TT_ICON,     (50,50)),
+    ]:
+        if os.path.exists(path):
+            img = Image.open(path).convert("RGB")
+            if key == "ig_toolbar": img = mask_dot(img)
+            refs[key] = prepare(img, size)
+            print(f"✅ {key}")
+        else:
+            refs[key] = None
+            print(f"⚠️  غير موجود: {path}")
+    return refs
+
+# ═══════════════════════════════════════════════
+#         منطق انستقرام
+# ═══════════════════════════════════════════════
+def check_instagram(screen, refs):
+    if refs["ig_settings"] is not None:
+        hdr = screen.crop((IG_HEADER_X1,IG_HEADER_Y1,IG_HEADER_X2,IG_HEADER_Y2))
+        if sim(prepare(hdr,(200,25)), refs["ig_settings"]) >= IG_HDR:
+            return "settings"
+
+    if refs["ig_reel"] is not None:
+        reel = screen.crop((IG_REEL_X1,IG_REEL_Y1,IG_REEL_X2,IG_REEL_Y2))
+        if sim(prepare(reel,(50,30)), refs["ig_reel"]) >= IG_REEL:
+            return "reel"
+
+    toolbar = mask_dot(screen.crop((IG_TOOLBAR_X1,IG_TOOLBAR_Y1,IG_TOOLBAR_X2,IG_TOOLBAR_Y2)))
+    score = sim(prepare(toolbar,(300,30)), refs["ig_toolbar"])
+    if score >= IG_MIN: return "allowed"
+    if score <= IG_MAX: return "hidden"
+    return "blocked"
+
+# ═══════════════════════════════════════════════
+#         منطق تيك توك
+# ═══════════════════════════════════════════════
+def check_tiktok(screen, refs):
+    if refs["tt_home"] is not None:
+        home = screen.crop((TT_HOME_X1,TT_HOME_Y1,TT_HOME_X2,TT_HOME_Y2))
+        if sim(prepare(home,(50,50)), refs["tt_home"]) >= TT_THRESH:
+            return "blocked"
+    if refs["tt_icon"] is not None:
+        icon = screen.crop((TT_ICON_X1,TT_ICON_Y1,TT_ICON_X2,TT_ICON_Y2))
+        if sim(prepare(icon,(50,50)), refs["tt_icon"]) >= TT_THRESH:
+            return "blocked"
+    return "allowed"
+
+# ═══════════════════════════════════════════════
+#         الحلقة الرئيسية
+# ═══════════════════════════════════════════════
+def main():
+    print("="*50)
+    print("  📵  All-in-One Guard  📵")
+    print("="*50)
+
+    out = adb_str(["devices"])
+    lines = [l for l in out.strip().splitlines() if "device" in l and "List" not in l]
+    if not lines:
+        print("❌ لا يوجد جهاز!"); sys.exit(1)
+    print(f"✅ جهاز: {lines[0].split()[0]}\n")
+
+    refs = load_refs()
+    print("\n🚀 بدأ المراقبة كل 0.6 ثانية... Ctrl+C للإيقاف\n")
+
+    ig_was_open = False
+    tt_was_open = False
+    count = 0
+
+    try:
+        while True:
+            t0 = time.time()
+            count += 1
+
+            # ── فحص التطبيق الحالي ──
+            app = current_app()
+
+            # ── انستقرام ──
+            if IG_PKG in app:
+                if not ig_was_open:
+                    print("📱 انستقرام فُتح → رسائل...")
+                    time.sleep(1.5); tap(IG_MSG_X, IG_MSG_Y); time.sleep(1.2)
+                ig_was_open = True
+                tt_was_open = False
+                try:
+                    screen = screenshot()
+                    result = check_instagram(screen, refs)
+                    if result in ("settings","reel","blocked"):
+                        lbl = {"settings":"إعدادات","reel":"ريلز","blocked":"تاب ممنوع"}[result]
+                        print(f"\n🚫 {lbl} → خروج")
+                        go_home(); time.sleep(0.5)
+                    elif result == "allowed":
+                        sys.stdout.write(f"\r✅ انستقرام-رسائل | #{count}   ")
+                    else:
+                        sys.stdout.write(f"\r💬 انستقرام-محادثة | #{count}   ")
+                    sys.stdout.flush()
+                except Exception as e:
+                    print(f"⚠️IG {e}")
+
+            # ── تيك توك ──
+            elif TT_PKG in app:
+                if not tt_was_open:
+                    print("📱 تيك توك فُتح → رسائل...")
+                    time.sleep(1.5); tap(TT_MSG_X, TT_MSG_Y); time.sleep(1.2)
+                tt_was_open = True
+                ig_was_open = False
+                try:
+                    screen = screenshot()
+                    result = check_tiktok(screen, refs)
+                    if result == "blocked":
+                        print(f"\n🚫 تيك توك ممنوع → خروج")
+                        go_home(); time.sleep(0.5)
+                    else:
+                        sys.stdout.write(f"\r✅ تيك توك-رسائل | #{count}   ")
+                    sys.stdout.flush()
+                except Exception as e:
+                    print(f"⚠️TT {e}")
+
+            # ── تطبيق آخر ──
+            else:
+                ig_was_open = False
+                tt_was_open = False
+
+                # فحص DNS
+                try:
+                    act = adb_str(["shell","dumpsys","activity","top"], timeout=4)
+                    for b in DNS_BLOCKED:
+                        if b in act:
+                            print(f"\n🔒 DNS محظور! → رجوع")
+                            go_back(); time.sleep(0.5); break
+                except: pass
+
+                # فحص Split Screen
+                try:
+                    acts = adb_str(["shell","dumpsys","activity","activities"], timeout=4)
+                    if any(s in acts for s in SPLIT_BLOCKED):
+                        print(f"\n🚫 Split Screen! → خروج")
+                        go_home(); go_home(); time.sleep(1.5)
+                except: pass
+
+                sys.stdout.write(f"\r💤 #{count}   ")
+                sys.stdout.flush()
+
+            time.sleep(max(0, CHECK_INTERVAL-(time.time()-t0)))
+
+    except KeyboardInterrupt:
+        print(f"\n\n⏹️ توقفت. فحوصات: {count}")
+
+if __name__ == "__main__":
+    main()
