@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""
+Private Space Killer - تعطيل الفضاء الخاص كلياً
+يوقف ميزة الواجهة الثانية بشكل كامل عبر ADB
+تشغيل: python3 private_space_killer.py
+"""
+import subprocess
+import sys
+
+PACKAGE = "com.miui.securitycore"
+ACTIVITY = "com.miui.securityspace.ui.activity.PrivateSpaceMainActivity"
+
+def adb(cmd: list, timeout=10) -> tuple:
+    result = subprocess.run(
+        ["adb"] + cmd,
+        capture_output=True,
+        timeout=timeout
+    )
+    stdout = result.stdout.decode(errors="ignore").strip()
+    stderr = result.stderr.decode(errors="ignore").strip()
+    return stdout, stderr
+
+def check_adb():
+    out, _ = adb(["devices"])
+    lines = [l for l in out.strip().splitlines() if "device" in l and "List" not in l]
+    if not lines:
+        print("❌  لا يوجد جهاز متصل! تأكد من تفعيل USB Debugging")
+        sys.exit(1)
+    print(f"✅  جهاز متصل: {lines[0].split()[0]}")
+
+def get_package_state() -> str:
+    out, _ = adb(["shell", "pm", "list", "packages", "-d"])
+    if PACKAGE in out:
+        return "disabled"
+    out2, _ = adb(["shell", "pm", "list", "packages", "-e"])
+    if PACKAGE in out2:
+        return "enabled"
+    return "unknown"
+
+def disable_private_space():
+    print("\n🔨  جاري تعطيل الفضاء الخاص...")
+
+    # 1. تعطيل الباكج كلياً
+    out, err = adb(["shell", "pm", "disable-user", "--user", "0", PACKAGE])
+    print(f"   pkg disable  → {out or err}")
+
+    # 2. إيقاف العملية فوراً
+    out2, _ = adb(["shell", "am", "force-stop", PACKAGE])
+    print(f"   force-stop   → {'تم' if not out2 else out2}")
+
+    # 3. إخفاء الباكج (طبقة إضافية)
+    out3, _ = adb(["shell", "pm", "hide", PACKAGE])
+    print(f"   hide pkg     → {'تم' if not out3 else out3}")
+
+    # 4. تعطيل الـ Activity تحديداً
+    out4, _ = adb(["shell", "pm", "disable", f"{PACKAGE}/{ACTIVITY}"])
+    print(f"   disable act  → {out4 or 'تم'}")
+
+    print("\n✅  الفضاء الخاص معطّل كلياً! الزر لن يعمل.")
+
+def enable_private_space():
+    print("\n🔓  جاري إعادة تفعيل الفضاء الخاص...")
+
+    out, err = adb(["shell", "pm", "enable", PACKAGE])
+    print(f"   pkg enable   → {out or err}")
+
+    out2, _ = adb(["shell", "pm", "unhide", PACKAGE])
+    print(f"   unhide pkg   → {'تم' if not out2 else out2}")
+
+    out3, _ = adb(["shell", "pm", "enable", f"{PACKAGE}/{ACTIVITY}"])
+    print(f"   enable act   → {out3 or 'تم'}")
+
+    print("\n✅  الفضاء الخاص مفعّل مجدداً.")
+
+def main():
+    print("=" * 55)
+    print("  💀  Private Space Killer  💀")
+    print("     تعطيل الواجهة الثانية كلياً - MIUI")
+    print("=" * 55)
+
+    check_adb()
+
+    state = get_package_state()
+    print(f"\n📊  الحالة الحالية: {'🔴 معطّل' if state == 'disabled' else '🟢 مفعّل' if state == 'enabled' else '❓ غير معروف'}")
+
+    print("\nاختر:")
+    print("  [1] 🔴  تعطيل الفضاء الخاص كلياً")
+    print("  [2] 🟢  إعادة التفعيل (تراجع)")
+    print("  [0] خروج")
+
+    choice = input("\n> ").strip()
+
+    if choice == "1":
+        disable_private_space()
+    elif choice == "2":
+        enable_private_space()
+    elif choice == "0":
+        print("خروج.")
+    else:
+        print("❌  اختيار غير صحيح")
+
+if __name__ == "__main__":
+    main()
