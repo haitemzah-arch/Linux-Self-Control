@@ -1,0 +1,102 @@
+"""
+============================================================
+  Telegram Search Blocker - نسخة مُصلحة
+  يحظر فقط عند فتح البحث فعلاً وليس مجرد ظهور الزر
+============================================================
+"""
+
+import uiautomator2 as u2
+import time
+import re
+import sys
+
+DEVICE = "usb"
+CHECK_INTERVAL = 0.5
+
+TELEGRAM_PACKAGES = [
+    "org.telegram.messenger",
+    "org.thunderdog.challegram",
+]
+
+def connect():
+    print("🔌 جاري الاتصال...")
+    try:
+        d = u2.connect() if DEVICE == "usb" else u2.connect(DEVICE)
+        print(f"✅ متصل: {d.info.get('productName')} | أندرويد {d.info.get('sdkInt')}")
+        return d
+    except Exception as e:
+        print(f"❌ فشل: {e}")
+        sys.exit(1)
+
+def is_search_actually_open(hierarchy):
+    """
+    الفرق بين الزر الظاهر دائماً وبين البحث المفتوح فعلاً:
+    - الزر دائماً موجود لكن focused=false وغير قابل للكتابة
+    - عند فتح البحث: يظهر EditText بـ focused=true
+    """
+
+    # ✅ الشرط الأساسي: وجود EditText مركّز (المستخدم فتح البحث)
+    if 'focused="true"' in hierarchy:
+        if any(kw in hierarchy for kw in [
+            'search_field', 'search_input', 'search_query',
+            'البحث', 'Search'
+        ]):
+            return True, "EditText مركّز في البحث"
+
+    # ✅ IDs تظهر فقط عند فتح شاشة البحث الكاملة
+    search_screen_ids = [
+        'org.thunderdog.challegram:id/search_field',
+        'org.thunderdog.challegram:id/search_container',
+        'org.telegram.messenger:id/search_field',
+        'org.telegram.messenger:id/search_src_text',
+    ]
+    ids = set(re.findall(r'resource-id="([^"]+)"', hierarchy))
+    for sid in search_screen_ids:
+        if sid in ids:
+            return True, f"شاشة البحث: {sid}"
+
+    # ✅ hint يظهر فقط داخل حقل البحث المفتوح
+    for hint in ['hint="Search"', 'hint="بحث"', 'hint="البحث"']:
+        if hint in hierarchy:
+            return True, "Hint بحث مكتشف"
+
+    return False, None
+
+def monitor(d):
+    print("\n🛡️  الحماية تعمل - Ctrl+C للإيقاف\n")
+    blocked_count = 0
+
+    while True:
+        try:
+            app = d.app_current()
+            package = app.get("package", "")
+
+            if not any(pkg in package for pkg in TELEGRAM_PACKAGES):
+                time.sleep(CHECK_INTERVAL)
+                continue
+
+            hierarchy = d.dump_hierarchy()
+            is_blocked, reason = is_search_actually_open(hierarchy)
+
+            ts = time.strftime("%H:%M:%S")
+
+            if is_blocked:
+                blocked_count += 1
+                print(f"[{ts}] 🚫 بحث مفتوح! ({reason}) → رجوع #{blocked_count}")
+                d.press("back")
+                time.sleep(0.3)
+                d.press("back")
+            else:
+                print(f"[{ts}] ✅ آمن", end="\r")
+
+            time.sleep(CHECK_INTERVAL)
+
+        except KeyboardInterrupt:
+            print(f"\n\n⏹️  إيقاف | تم الحظر {blocked_count} مرة")
+            break
+        except Exception as e:
+            time.sleep(1)
+
+if __name__ == "__main__":
+    d = connect()
+    monitor(d)
