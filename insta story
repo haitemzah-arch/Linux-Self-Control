@@ -1,0 +1,124 @@
+"""
+============================================================
+  Content Blocker - حاجب المحتوى
+  ✅ Instagram: Stories
+  🔜 TikTok: قريباً
+============================================================
+"""
+
+import uiautomator2 as u2
+import time
+import re
+import sys
+
+DEVICE = "usb"
+CHECK_INTERVAL = 0.5
+
+# ===================== قواعد الحظر =====================
+BLOCK_RULES = {
+
+    # ── Instagram ──────────────────────────────────────
+    "com.instagram.android": [
+        {
+            "name": "Instagram Stories / Reels Viewer",
+            "match_any_id": [
+                "com.instagram.android:id/reel_viewer_root",
+                "com.instagram.android:id/reel_viewer_media_container",
+            ],
+            # استثناء: لا تحظر لو المستخدم في الرسائل
+            "whitelist_ids": [
+                "com.instagram.android:id/direct_thread_view",
+            ]
+        },
+    ],
+
+    # ── TikTok (قريباً) ────────────────────────────────
+    # "com.zhiliaoapp.musically": [ ... ],
+    # "com.ss.android.ugc.trill":  [ ... ],
+}
+
+# ===================== الاتصال =====================
+def connect():
+    print("🔌 جاري الاتصال...")
+    try:
+        d = u2.connect() if DEVICE == "usb" else u2.connect(DEVICE)
+        print(f"✅ متصل: {d.info.get('productName')} | أندرويد {d.info.get('sdkInt')}")
+        return d
+    except Exception as e:
+        print(f"❌ فشل الاتصال: {e}")
+        sys.exit(1)
+
+# ===================== فحص الشاشة =====================
+def check_screen(package, hierarchy, ids):
+    rules = BLOCK_RULES.get(package)
+    if not rules:
+        return False, None
+
+    for rule in rules:
+        # تحقق من الاستثناءات أولاً (Whitelist)
+        if any(wid in ids for wid in rule.get("whitelist_ids", [])):
+            return False, None
+
+        # تحقق من عناصر الحظر
+        for bid in rule.get("match_any_id", []):
+            if bid in ids:
+                return True, f"{rule['name']} ← {bid}"
+
+    return False, None
+
+# ===================== المراقبة =====================
+def monitor(d):
+    print("\n🛡️  الحماية تعمل - Ctrl+C للإيقاف")
+    print("=" * 50)
+    print("  ✅ Instagram Stories  → محظور")
+    print("  🔜 TikTok Stories     → قريباً")
+    print("=" * 50 + "\n")
+
+    blocked_count = 0
+    last_status = ""
+
+    while True:
+        try:
+            app = d.app_current()
+            package = app.get("package", "")
+
+            # تجاهل التطبيقات غير المراقبة
+            if package not in BLOCK_RULES:
+                status = f"⏭️  {package.split('.')[-1]}"
+                if status != last_status:
+                    print(f"[{time.strftime('%H:%M:%S')}] {status}", end="\r")
+                    last_status = status
+                time.sleep(CHECK_INTERVAL)
+                continue
+
+            hierarchy = d.dump_hierarchy()
+            ids = set(re.findall(r'resource-id="([^"]+)"', hierarchy))
+
+            is_blocked, reason = check_screen(package, hierarchy, ids)
+            ts = time.strftime("%H:%M:%S")
+
+            if is_blocked:
+                blocked_count += 1
+                print(f"\n[{ts}] 🚫 [{blocked_count}] {reason} → رجوع!")
+                d.press("back")
+                time.sleep(0.2)
+                d.press("back")
+                last_status = ""
+            else:
+                status = f"✅ آمن | {package.split('.')[-1]}"
+                if status != last_status:
+                    print(f"[{ts}] {status}            ", end="\r")
+                    last_status = status
+
+            time.sleep(CHECK_INTERVAL)
+
+        except KeyboardInterrupt:
+            print(f"\n\n⏹️  إيقاف | تم الحظر {blocked_count} مرة")
+            break
+        except Exception:
+            time.sleep(1)
+
+# ===================== التشغيل =====================
+if __name__ == "__main__":
+    d = connect()
+    monitor(d)
