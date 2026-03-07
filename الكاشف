@@ -1,0 +1,276 @@
+"""
+============================================================
+  Android UI Inspector - كاشف عناصر الشاشة عبر ADB
+  يعمل مثل Accessibility Service تماماً
+  المتطلبات: pip install uiautomator2 && adb connect <ip>
+============================================================
+"""
+
+import uiautomator2 as u2
+import time
+import sys
+
+# ===================== الإعدادات =====================
+# إذا متصل بـ USB اكتب: "usb"
+# إذا متصل بـ WiFi اكتب: "IP_ADDRESS"
+DEVICE = "usb"
+
+# ===================== قوائم البحث =====================
+
+# عناصر TikTok التي نريد حظرها
+TIKTOK_BLOCKED = {
+    "stories": [
+        "com.zhiliaoapp.musically:id/story_container",
+        "com.zhiliaoapp.musically:id/stories_header",
+        "com.ss.android.ugc.trill:id/story_container",   # نسخة أخرى TikTok
+        "com.zhiliaoapp.musically:id/iv_story_avatar",
+        "com.zhiliaoapp.musically:id/story_bar",
+    ],
+    "for_you_feed": [
+        "com.zhiliaoapp.musically:id/feed_container",
+        "com.zhiliaoapp.musically:id/videocard",
+    ]
+}
+
+# عناصر Telegram التي نريد حظرها
+TELEGRAM_BLOCKED = {
+    "search_bar": [
+        "org.telegram.messenger:id/search_field",
+        "org.telegram.messenger:id/search_field_container",
+        "org.telegram.messenger:id/toolbar_search_view",
+        "org.telegram.messenger.web:id/search_field",  # نسخة Web
+        "org.telegram.messenger:id/contacts_search_field",
+    ]
+}
+
+# نصوص للبحث عنها (كبديل للـ IDs)
+TIKTOK_TEXT_HINTS = ["For You", "Following", "LIVE", "Stories"]
+TELEGRAM_TEXT_HINTS = ["Search", "بحث", "Поиск"]
+
+# ===================== الكود الرئيسي =====================
+
+def connect_device():
+    """الاتصال بالجهاز"""
+    print("🔌 جاري الاتصال بالجهاز...")
+    try:
+        if DEVICE == "usb":
+            d = u2.connect()
+        else:
+            d = u2.connect(DEVICE)
+        info = d.info
+        print(f"✅ متصل بـ: {info.get('productName', 'Unknown')} | أندرويد {info.get('sdkInt', '?')}")
+        return d
+    except Exception as e:
+        print(f"❌ فشل الاتصال: {e}")
+        print("💡 تأكد من: adb devices | pip install uiautomator2 | python -m uiautomator2 init")
+        sys.exit(1)
+
+
+def dump_all_ids(d):
+    """تفريغ كل IDs الموجودة على الشاشة الحالية"""
+    print("\n📋 جاري قراءة كل عناصر الشاشة الحالية...\n")
+    
+    hierarchy = d.dump_hierarchy()
+    
+    # استخراج كل resource-id
+    import re
+    ids = re.findall(r'resource-id="([^"]+)"', hierarchy)
+    texts = re.findall(r'text="([^"]+)"', hierarchy)
+    content_descs = re.findall(r'content-desc="([^"]+)"', hierarchy)
+    
+    ids = sorted(set([i for i in ids if i]))  # إزالة المكررات والفارغة
+    texts = sorted(set([t for t in texts if t]))
+    content_descs = sorted(set([c for c in content_descs if c]))
+    
+    print("=" * 60)
+    print(f"🆔 IDs الموجودة ({len(ids)} عنصر):")
+    print("=" * 60)
+    for id_ in ids:
+        print(f"  • {id_}")
+    
+    print(f"\n📝 النصوص الظاهرة ({len(texts)}):")
+    print("=" * 60)
+    for t in texts[:30]:  # أول 30 نص فقط
+        print(f"  • {t}")
+    
+    print(f"\n♿ Content Descriptions ({len(content_descs)}):")
+    print("=" * 60)
+    for c in content_descs[:20]:
+        print(f"  • {c}")
+    
+    return ids, texts, content_descs
+
+
+def check_tiktok(d):
+    """فحص شاشة TikTok الحالية"""
+    print("\n🎵 فحص TikTok...")
+    ids, texts, descs = dump_all_ids(d)
+    
+    detected = []
+    
+    # فحص Stories IDs
+    for id_ in TIKTOK_BLOCKED["stories"]:
+        if id_ in ids:
+            detected.append(f"🚫 [STORY ID وجد]: {id_}")
+    
+    # فحص Feed IDs
+    for id_ in TIKTOK_BLOCKED["for_you_feed"]:
+        if id_ in ids:
+            detected.append(f"🚫 [FEED ID وجد]: {id_}")
+    
+    # فحص النصوص
+    for text in TIKTOK_TEXT_HINTS:
+        if text in texts:
+            detected.append(f"⚠️  [نص مكتشف]: '{text}'")
+    
+    print("\n" + "=" * 60)
+    if detected:
+        print("🔴 النتيجة: تم اكتشاف عناصر محظورة!")
+        for d_item in detected:
+            print(f"  {d_item}")
+    else:
+        print("🟢 النتيجة: لم يُكتشف أي عنصر محظور في هذه الشاشة")
+    print("=" * 60)
+
+
+def check_telegram(d):
+    """فحص شاشة Telegram الحالية"""
+    print("\n✈️  فحص Telegram...")
+    ids, texts, descs = dump_all_ids(d)
+    
+    detected = []
+    
+    # فحص Search Bar IDs
+    for id_ in TELEGRAM_BLOCKED["search_bar"]:
+        if id_ in ids:
+            detected.append(f"🚫 [SEARCH BAR وجد]: {id_}")
+    
+    # فحص النصوص
+    for text in TELEGRAM_TEXT_HINTS:
+        if text in texts:
+            detected.append(f"⚠️  [نص بحث مكتشف]: '{text}'")
+    
+    # فحص خاص: هل توجد حقل نصي في شريط بحث؟
+    try:
+        search_fields = d.xpath('//android.widget.EditText').all()
+        if search_fields:
+            detected.append(f"⚠️  [حقل إدخال نصي]: {len(search_fields)} عنصر EditText موجود")
+    except:
+        pass
+    
+    print("\n" + "=" * 60)
+    if detected:
+        print("🔴 النتيجة: تم اكتشاف Search Bar أو عناصر بحث!")
+        for d_item in detected:
+            print(f"  {d_item}")
+    else:
+        print("🟢 النتيجة: لم يُكتشف Search Bar في هذه الشاشة")
+    print("=" * 60)
+
+
+def monitor_mode(d, interval=1.5):
+    """وضع المراقبة المستمرة - يراقب كل X ثانية"""
+    print("\n👁️  وضع المراقبة المستمرة (Ctrl+C للإيقاف)")
+    print(f"   الفحص كل {interval} ثانية...\n")
+    
+    import re
+    
+    last_package = ""
+    
+    while True:
+        try:
+            # معرفة التطبيق الحالي
+            current_app = d.app_current()
+            package = current_app.get("package", "")
+            activity = current_app.get("activity", "")
+            
+            if package != last_package:
+                print(f"\n📱 تطبيق نشط: {package}")
+                last_package = package
+            
+            # قراءة الشاشة
+            hierarchy = d.dump_hierarchy()
+            ids = set(re.findall(r'resource-id="([^"]+)"', hierarchy))
+            texts = set(re.findall(r'text="([^"]+)"', hierarchy))
+            
+            found_blocked = []
+            
+            # ---- فحص TikTok ----
+            if "tiktok" in package or "musically" in package or "trill" in package:
+                all_blocked_ids = (
+                    TIKTOK_BLOCKED["stories"] + 
+                    TIKTOK_BLOCKED["for_you_feed"]
+                )
+                for id_ in all_blocked_ids:
+                    if id_ in ids:
+                        found_blocked.append(("TIKTOK_ID", id_))
+                for text in TIKTOK_TEXT_HINTS:
+                    if text in texts:
+                        found_blocked.append(("TIKTOK_TEXT", text))
+            
+            # ---- فحص Telegram ----
+            elif "telegram" in package:
+                for id_ in TELEGRAM_BLOCKED["search_bar"]:
+                    if id_ in ids:
+                        found_blocked.append(("TELEGRAM_SEARCH_ID", id_))
+                for text in TELEGRAM_TEXT_HINTS:
+                    if text in texts:
+                        found_blocked.append(("TELEGRAM_SEARCH_TEXT", text))
+            
+            # عرض النتيجة
+            timestamp = time.strftime("%H:%M:%S")
+            if found_blocked:
+                print(f"[{timestamp}] 🔴 محظور! {found_blocked}")
+                # هنا يمكنك إضافة: d.press("back") لإرجاع المستخدم
+            else:
+                print(f"[{timestamp}] 🟢 آمن | {package.split('.')[-1]} | {activity.split('.')[-1][:30]}")
+            
+            time.sleep(interval)
+            
+        except KeyboardInterrupt:
+            print("\n⏹️  إيقاف المراقبة")
+            break
+        except Exception as e:
+            print(f"⚠️  خطأ مؤقت: {e}")
+            time.sleep(2)
+
+
+# ===================== القائمة الرئيسية =====================
+
+def main():
+    d = connect_device()
+    
+    print("\n" + "=" * 60)
+    print("  🔍 Android UI Inspector - اختر وضع العمل")
+    print("=" * 60)
+    print("  1️⃣  تفريغ كل IDs الشاشة الحالية (اكتشاف)")
+    print("  2️⃣  فحص TikTok (Stories)")
+    print("  3️⃣  فحص Telegram (Search Bar)")
+    print("  4️⃣  وضع المراقبة المستمرة")
+    print("=" * 60)
+    
+    choice = input("\nاختيارك (1-4): ").strip()
+    
+    if choice == "1":
+        print("\n💡 افتح الشاشة التي تريد فحصها ثم اضغط Enter...")
+        input()
+        dump_all_ids(d)
+        
+    elif choice == "2":
+        print("\n💡 افتح TikTok على شاشة Stories ثم اضغط Enter...")
+        input()
+        check_tiktok(d)
+        
+    elif choice == "3":
+        print("\n💡 افتح Telegram وانقر على البحث ثم اضغط Enter...")
+        input()
+        check_telegram(d)
+        
+    elif choice == "4":
+        monitor_mode(d)
+        
+    else:
+        print("❌ اختيار غير صحيح")
+
+if __name__ == "__main__":
+    main()
