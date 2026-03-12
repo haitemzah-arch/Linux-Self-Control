@@ -24,6 +24,8 @@ MEGA_FORBIDDEN_CLASSES =[
     "yandex", "yabrowser", "maxthon", "ucbrowser", "puffin", "netscape", "sleipnir",
     "lunascape", "kmeleon", "blisk", "colibri", "polypane", "beaker", "iron", "slimjet",
     "centbrowser", "iridium", "epic", "sogou", "qqbrowser", "baidubrowser", "360secure"
+    # إضافة حظر واجهة Genymotion
+    "genymotion"
 ]
 
 print("🛡️ بدء تشغيل صائد المتصفحات (النسخة المصححة)...")
