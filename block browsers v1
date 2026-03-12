@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Browser Guard v6.1 - Fixed Scanner (Using xprop)
+"""
+
+import subprocess
+import time
+import os
+
+# =================================================================
+# القائمة العملاقة
+# =================================================================
+MEGA_FORBIDDEN_CLASSES =[
+    "google-chrome", "chrome", "chromium", "thorium", "ungoogled-chromium",
+    "firefox", "waterfox", "librewolf", "floorp", "mullvad", "icecat", "iceweasel",
+    "palemoon", "basilisk", "seamonkey", "cyberfox",
+    "edge", "microsoft-edge", "opera", "vivaldi",
+    "tor browser", "torbrowser", "duckduckgo", "ghostery",
+    "brave-browser-beta", "brave-browser-nightly", "brave-browser-dev",
+    "epiphany", "midori", "falkon", "konqueror", "qutebrowser", "surf", "luakit",
+    "nyxt", "vimb", "badwolf", "dillo", "netsurf", "otter", "dooble", "uzbl", "galeon",
+    "yandex", "yabrowser", "maxthon", "ucbrowser", "puffin", "netscape", "sleipnir",
+    "lunascape", "kmeleon", "blisk", "colibri", "polypane", "beaker", "iron", "slimjet",
+    "centbrowser", "iridium", "epic", "sogou", "qqbrowser", "baidubrowser", "360secure"
+]
+
+print("🛡️ بدء تشغيل صائد المتصفحات (النسخة المصححة)...")
+
+while True:
+    try:
+        # 1. الحصول على ID النافذة النشطة
+        active_win = subprocess.check_output(["xdotool", "getactivewindow"], stderr=subprocess.DEVNULL).decode("utf-8").strip()
+        
+        # 2. استخدام xprop لجلب الكلاس الحقيقي للنافذة (هنا كان الخطأ وتم إصلاحه)
+        win_class_info = subprocess.check_output(["xprop", "-id", active_win, "WM_CLASS"], stderr=subprocess.DEVNULL).decode("utf-8").lower()
+        
+        # 3. مقارنة الكلاس بالقائمة العملاقة
+        for bad_browser in MEGA_FORBIDDEN_CLASSES:
+            if bad_browser in win_class_info:
+                print(f"🚫 تم رصد متصفح محظور: {bad_browser}. جاري سحقه!")
+                
+                try:
+                    pid = subprocess.check_output(["xdotool", "getwindowpid", active_win], stderr=subprocess.DEVNULL).decode("utf-8").strip()
+                    os.system(f"kill -9 {pid} 2>/dev/null")
+                except:
+                    pass
+                
+                os.system(f"xdotool windowclose {active_win} 2>/dev/null")
+                break
+                
+    except subprocess.CalledProcessError:
+        pass
+    except Exception as e:
+        pass
+        
+    time.sleep(0.5)
